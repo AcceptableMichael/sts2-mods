@@ -1,0 +1,11 @@
+{
+  "id": "PotionSlotSorter",
+  "name": "Potion Slot Sorter",
+  "author": "AcceptableMichael",
+  "description": "After using a potion, shifts remaining potions left to fill empty slots.",
+  "version": "1.0.0",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false
+}

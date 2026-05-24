@@ -4,7 +4,6 @@ using HarmonyLib;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Audio;
-using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.Settings;
@@ -17,7 +16,9 @@ public static class MusicTogglePatch
 {
     private const string ButtonName = "MusicToggleButton";
     private const string ConnectedMeta = "MusicToggleConnected";
+    private const string GameOverMusic = "event:/temp/sfx/game_over";
     private static float _storedVolume = 0.5f;
+    private static bool _isBgmMuted;
 
     // Exclude DuplicateFlags.Signals so we don't inherit the Settings button's click handler.
     private const int DuplicateWithoutSignals = (int)(
@@ -34,7 +35,18 @@ public static class MusicTogglePatch
             NPauseMenuButton ____settingsButton,
             NPauseMenuButton ____compendiumButton)
         {
+            SyncMuteStateFromSettings();
             EnsureMusicToggleButton(____buttonContainer, ____settingsButton, ____compendiumButton);
+        }
+    }
+
+    [HarmonyPatch(typeof(NBgmVolumeSlider), "OnValueChanged")]
+    public static class BgmVolumeSliderPatch
+    {
+        [HarmonyPostfix]
+        private static void SyncMuteState(double value)
+        {
+            ApplyBgmVolume((float)(value / 100.0));
         }
     }
 
@@ -48,9 +60,45 @@ public static class MusicTogglePatch
             NPauseMenuButton ____compendiumButton)
         {
             var button = EnsureMusicToggleButton(____buttonContainer, ____settingsButton, ____compendiumButton);
+            SyncMuteStateFromSettings();
             UpdateButtonLabel(button);
             button.Enable();
             FixControllerInput(____buttonContainer);
+        }
+    }
+
+    [HarmonyPatch(typeof(NAudioManager), nameof(NAudioManager.PlayMusic))]
+    public static class PlayMusicPatch
+    {
+        [HarmonyPrefix]
+        private static bool Prefix(string music)
+        {
+            if (ShouldSkipRunEndMusic(music))
+            {
+                MainFile.Logger.Info($"Skipping run end music '{music}' because BGM is muted");
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private static bool ShouldSkipRunEndMusic(string music) =>
+        IsRunEndMusic(music) && IsBgmMuted();
+
+    private static bool IsRunEndMusic(string music) =>
+        !string.IsNullOrEmpty(music)
+        && (music == GameOverMusic || music.Contains("game_over", StringComparison.Ordinal));
+
+    private static bool IsBgmMuted() =>
+        _isBgmMuted || SaveManager.Instance.SettingsSave.VolumeBgm <= 0f;
+
+    private static void SyncMuteStateFromSettings()
+    {
+        _isBgmMuted = SaveManager.Instance.SettingsSave.VolumeBgm <= 0f;
+        if (!_isBgmMuted && _storedVolume <= 0f)
+        {
+            _storedVolume = SaveManager.Instance.SettingsSave.VolumeBgm;
         }
     }
 
@@ -119,9 +167,16 @@ public static class MusicTogglePatch
 
     private static void ApplyBgmVolume(float volume)
     {
+        _isBgmMuted = volume <= 0f;
+
         // Match NBgmVolumeSlider.OnValueChanged: persist setting and apply to audio bus.
         SaveManager.Instance.SettingsSave.VolumeBgm = volume;
         NGame.Instance?.AudioManager?.SetBgmVol(volume);
+        if (_isBgmMuted)
+        {
+            NGame.Instance?.AudioManager?.StopMusic();
+        }
+
         SyncBgmVolumeSliders(volume);
     }
 

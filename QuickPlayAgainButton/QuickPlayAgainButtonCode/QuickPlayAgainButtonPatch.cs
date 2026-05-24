@@ -25,6 +25,16 @@ public static class QuickPlayAgainButtonPatch
     private const string ConnectedMeta = "QuickPlayAgainConnected";
     private const float HorizontalOffset = 320f;
 
+    private static readonly string[] InheritedDelegateFields =
+    [
+        "backing_Released",
+        "backing_Focused",
+        "backing_Unfocused",
+        "backing_MouseReleased",
+        "backing_MousePressed",
+    ];
+
+    // Exclude DuplicateFlags.Signals so we don't inherit the main menu button's click handler.
     private const int DuplicateWithoutSignals = (int)(
         Node.DuplicateFlags.Groups |
         Node.DuplicateFlags.Scripts |
@@ -83,29 +93,53 @@ public static class QuickPlayAgainButtonPatch
         NReturnToMainMenuButton mainMenuButton,
         Control uiNode)
     {
-        var existing = uiNode.GetNodeOrNull<NReturnToMainMenuButton>(ButtonName);
-        if (existing != null)
+        var playAgainButton = uiNode.GetNodeOrNull<NReturnToMainMenuButton>(ButtonName);
+        if (playAgainButton == null)
         {
-            return existing;
+            playAgainButton = (NReturnToMainMenuButton)mainMenuButton.Duplicate(DuplicateWithoutSignals);
+            playAgainButton.Name = ButtonName;
+
+            var image = playAgainButton.GetNode<TextureRect>("Image");
+            image.Material = (ShaderMaterial)image.Material.Duplicate();
+            SetPrivateField(playAgainButton, "_hsv", image.Material);
+
+            uiNode.AddChild(playAgainButton);
+            uiNode.MoveChild(playAgainButton, mainMenuButton.GetIndex());
+
+            playAgainButton.GetNode<MegaLabel>("Label").SetTextAutoSize("Play Again");
+            AdjustButtonPairPosition(mainMenuButton, playAgainButton);
+            playAgainButton.Disable();
+
+            MainFile.Logger.Info("Added Play again button to game over screen");
         }
 
-        var playAgainButton = (NReturnToMainMenuButton)mainMenuButton.Duplicate(DuplicateWithoutSignals);
-        playAgainButton.Name = ButtonName;
-
-        var image = playAgainButton.GetNode<TextureRect>("Image");
-        image.Material = (ShaderMaterial)image.Material.Duplicate();
-        SetPrivateField(playAgainButton, "_hsv", image.Material);
-
-        uiNode.AddChild(playAgainButton);
-        uiNode.MoveChild(playAgainButton, mainMenuButton.GetIndex());
-
-        playAgainButton.GetNode<MegaLabel>("Label").SetTextAutoSize("Play Again");
-        AdjustButtonPairPosition(mainMenuButton, playAgainButton);
+        ResetDuplicatedClickState(playAgainButton);
         EnsureReleasedHandler(playAgainButton);
-        playAgainButton.Disable();
-
-        MainFile.Logger.Info("Added Play again button to game over screen");
         return playAgainButton;
+    }
+
+    private static void ResetDuplicatedClickState(NReturnToMainMenuButton button)
+    {
+        ClearSignalConnections(button, NClickableControl.SignalName.Released);
+
+        foreach (var fieldName in InheritedDelegateFields)
+        {
+            SetPrivateField(button, fieldName, null);
+        }
+
+        SetPrivateField(button, "_isPressed", false);
+        button.RemoveMeta(ConnectedMeta);
+    }
+
+    private static void ClearSignalConnections(NClickableControl button, StringName signalName)
+    {
+        foreach (var connection in button.GetSignalConnectionList(signalName))
+        {
+            if (connection.TryGetValue("callable", out var callableVariant))
+            {
+                button.Disconnect(signalName, (Callable)callableVariant);
+            }
+        }
     }
 
     private static void AdjustButtonPairPosition(
@@ -139,9 +173,15 @@ public static class QuickPlayAgainButtonPatch
 
     private static void OnPlayAgainButtonReleased(NButton _)
     {
+        if (_.Name != ButtonName)
+        {
+            return;
+        }
+
         var screen = FindGameOverScreen(_);
         if (screen == null)
         {
+            MainFile.Logger.Info("Play Again clicked but game over screen was not found");
             return;
         }
 
@@ -149,55 +189,65 @@ public static class QuickPlayAgainButtonPatch
         var localPlayer = GetPrivateField<Player>(screen, "_localPlayer");
         if (runState == null || localPlayer == null)
         {
+            MainFile.Logger.Info("Play Again clicked but run state or local player was missing");
             return;
         }
 
+        MainFile.Logger.Info("Play Again clicked");
         TaskHelper.RunSafely(PlayAgainAsync(screen, runState, localPlayer));
     }
 
     private static async Task PlayAgainAsync(NGameOverScreen screen, RunState runState, Player localPlayer)
     {
-        if (!ShouldShowPlayAgain(runState))
+        try
         {
-            return;
-        }
+            if (!ShouldShowPlayAgain(runState))
+            {
+                MainFile.Logger.Info("Play Again aborted: run is not eligible for quick restart");
+                return;
+            }
 
-        if (RunManager.Instance.NetService.Type == NetGameType.Host)
+            if (RunManager.Instance.NetService.Type == NetGameType.Host)
+            {
+                RunManager.Instance.NetService.Disconnect(NetError.QuitGameOver);
+            }
+
+            var playAgainButton = GetPlayAgainButton(screen);
+            var mainMenuButton = screen.GetNode<NReturnToMainMenuButton>("%MainMenuButton");
+            playAgainButton?.Disable();
+            mainMenuButton.Disable();
+
+            var character = localPlayer.Character;
+            var ascension = runState.AscensionLevel;
+            var gameMode = runState.GameMode;
+
+            NAudioManager.Instance?.StopMusic();
+            SfxCmd.Play(character.CharacterTransitionSfx);
+            await NGame.Instance!.Transition.FadeOut(0.8f, character.CharacterSelectTransitionPath);
+
+            RunManager.Instance.CleanUp();
+
+            var seed = SeedHelper.GetRandomSeed();
+            var rng = new Rng((uint)StringHelper.GetDeterministicHashCode(seed));
+            var unlockState = SaveManager.Instance.GenerateUnlockStateFromProgress();
+            var acts = ActModel.GetRandomList(rng, unlockState, isMultiplayer: false).ToList();
+
+            MainFile.Logger.Info(
+                $"Starting new run with {character.Id.Entry} at ascension {ascension} (seed: {seed})");
+
+            await NGame.Instance.StartNewSingleplayerRun(
+                character,
+                shouldSave: true,
+                acts,
+                Array.Empty<ModifierModel>(),
+                seed,
+                gameMode,
+                ascension);
+        }
+        catch (Exception ex)
         {
-            RunManager.Instance.NetService.Disconnect(NetError.QuitGameOver);
+            MainFile.Logger.Info($"Play Again failed: {ex}");
         }
-
-        var playAgainButton = GetPlayAgainButton(screen);
-        var mainMenuButton = screen.GetNode<NReturnToMainMenuButton>("%MainMenuButton");
-        playAgainButton?.Disable();
-        mainMenuButton.Disable();
-
-        var character = localPlayer.Character;
-        var ascension = runState.AscensionLevel;
-        var gameMode = runState.GameMode;
-
-        NAudioManager.Instance?.StopMusic();
-        SfxCmd.Play(character.CharacterTransitionSfx);
-        await NGame.Instance!.Transition.FadeOut(0.8f, character.CharacterSelectTransitionPath);
-
-        RunManager.Instance.CleanUp();
-
-        var seed = SeedHelper.GetRandomSeed();
-        var rng = new Rng((uint)StringHelper.GetDeterministicHashCode(seed));
-        var unlockState = SaveManager.Instance.GenerateUnlockStateFromProgress();
-        var acts = ActModel.GetRandomList(rng, unlockState, isMultiplayer: false).ToList();
-
-        MainFile.Logger.Info(
-            $"Starting new run with {character.Id.Entry} at ascension {ascension} (seed: {seed})");
-
-        await NGame.Instance.StartNewSingleplayerRun(
-            character,
-            shouldSave: true,
-            acts,
-            Array.Empty<ModifierModel>(),
-            seed,
-            gameMode,
-            ascension);
     }
 
     private static void UpdatePlayAgainVisibility(NGameOverScreen screen)
@@ -250,19 +300,35 @@ public static class QuickPlayAgainButtonPatch
 
     private static T GetPrivateFieldValue<T>(object target, string fieldName) where T : struct
     {
-        var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        var field = FindInstanceField(target.GetType(), fieldName);
         return field?.GetValue(target) is T value ? value : default;
     }
 
     private static T? GetPrivateField<T>(object target, string fieldName) where T : class
     {
-        var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        var field = FindInstanceField(target.GetType(), fieldName);
         return field?.GetValue(target) as T;
     }
 
-    private static void SetPrivateField(object target, string fieldName, object value)
+    private static void SetPrivateField(object target, string fieldName, object? value)
     {
-        var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        var field = FindInstanceField(target.GetType(), fieldName);
         field?.SetValue(target, value);
+    }
+
+    private static FieldInfo? FindInstanceField(Type type, string fieldName)
+    {
+        while (type != null)
+        {
+            var field = type.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field != null)
+            {
+                return field;
+            }
+
+            type = type.BaseType;
+        }
+
+        return null;
     }
 }
