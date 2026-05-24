@@ -1,0 +1,11 @@
+{
+  "id": "MusicToggle",
+  "name": "Music Toggle",
+  "author": "AcceptableMichael",
+  "description": "Adds a Mute Music button to the in-run pause menu that toggles background music on and off.",
+  "version": "1.0.0",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false
+}

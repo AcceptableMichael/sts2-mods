@@ -1,0 +1,11 @@
+{
+  "id": "QuickPlayAgainButton",
+  "name": "Quick Play Again Button",
+  "author": "AcceptableMichael",
+  "description": "Adds a Play Again button on the run summary screen to restart with the same character and ascension.",
+  "version": "1.0.0",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": true
+}
