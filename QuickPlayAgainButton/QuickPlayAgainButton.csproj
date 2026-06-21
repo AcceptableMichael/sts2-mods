@@ -13,7 +13,8 @@
     <PropertyGroup>
         <!-- Diasble architecture mismatch warning; mods are ideally built for all platforms (MSIL)
              while your local StS2 version will be for your specific platform. -->
-        <NoWarn>$(NoWarn);MSB3270</NoWarn> 
+        <NoWarn>$(NoWarn);MSB3270</NoWarn>
+        <ContentOutputPath>$(MSBuildProjectDirectory)\content\</ContentOutputPath>
     </PropertyGroup>
 
     <ItemGroup Condition="Exists('$(Sts2DataDir)')" >
@@ -64,17 +65,17 @@
                 Condition="'$(Sts2DataDir)' == '' or !Exists('$(Sts2DataDir)')" />
     </Target>
 
-    <Target Name="CopyToModsFolderOnBuild" AfterTargets="PostBuildEvent">
-        <Message Text="Copying .dll .pdb and .json to mods folder." Importance="high" />
-        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModsPath)$(MSBuildProjectName)/" />
-        <Copy SourceFiles="$(AssemblyName).json" DestinationFolder="$(ModsPath)$(MSBuildProjectName)/" />
-        <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ModsPath)$(MSBuildProjectName)/" />
+    <Target Name="CopyToContentFolderOnBuild" AfterTargets="PostBuildEvent">
+        <Message Text="Copying .dll .pdb and .json to content folder." Importance="high" />
+        <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ContentOutputPath)" />
+        <Copy SourceFiles="$(AssemblyName).json" DestinationFolder="$(ContentOutputPath)" />
+        <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(ContentOutputPath)" Condition="Exists('$(TargetDir)$(TargetName).pdb')" />
     </Target>
 
     <Target Name="CopyQuickPck" AfterTargets="PackPck" Condition="Exists('$(PckPackerOutputPath)') And '$(PckPackerSkipped)' != 'true'">
-        <Message Text="Copying quick .pck to mods folder." Importance="high"/>
+        <Message Text="Copying quick .pck to content folder." Importance="high"/>
         <Copy SourceFiles="$(PckPackerOutputPath)"
-              DestinationFolder="$(ModsPath)/$(MSBuildProjectName)" />
+              DestinationFolder="$(ContentOutputPath)" />
     </Target>
 
     <Target Name="NeedGodotForPublish" BeforeTargets="Publish">
@@ -83,8 +84,8 @@
     </Target>
 
     <Target Name="GodotPublish" AfterTargets="Publish" Condition="'$(GodotPath)' != '' and Exists('$(GodotPath)') and '$(IsInnerGodotExport)' != 'true'">
-        <Message Text="Exporting Godot .pck to mods folder" Importance="high"/>
-        <Exec Command="&quot;$(GodotPath)&quot; --headless --export-pack &quot;BasicExport&quot; &quot;$(ModsPath)$(MSBuildProjectName)/$(MSBuildProjectName).pck&quot;"
+        <Message Text="Exporting Godot .pck to content folder" Importance="high"/>
+        <Exec Command="&quot;$(GodotPath)&quot; --headless --export-pack &quot;BasicExport&quot; &quot;$(ContentOutputPath)$(MSBuildProjectName).pck&quot;"
               EnvironmentVariables="IsInnerGodotExport=true;MSBUILDDISABLENODEREUSE=1"
               ContinueOnError="WarnAndContinue"/>
     </Target>

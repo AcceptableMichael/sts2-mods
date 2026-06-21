@@ -1,0 +1,8 @@
+﻿{
+  "title": "Quick Play Again Button",
+  "description": "Adds a button to the victory or defeat screen to play again with the same character and Ascension.",
+  "visibility": "private",
+  "changeNote": "None",
+  "tags": ["QoL"],
+  "dependencies": []
+}

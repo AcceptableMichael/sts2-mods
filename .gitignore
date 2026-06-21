@@ -1,1 +1,4 @@
 scripts/ModUploader-win-x64
+
+# Eventually I'll figure out how to pare the new mod down to the essentials
+QuickPlayAgainButton old
