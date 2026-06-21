@@ -19,6 +19,7 @@ public static class MusicTogglePatch
     private const string GameOverMusic = "event:/temp/sfx/game_over";
     private static float _storedVolume = 0.5f;
     private static bool _isBgmMuted;
+    private static Control? _pauseMenuButtonContainer;
 
     // Exclude DuplicateFlags.Signals so we don't inherit the Settings button's click handler.
     private const int DuplicateWithoutSignals = (int)(
@@ -40,13 +41,30 @@ public static class MusicTogglePatch
         }
     }
 
-    [HarmonyPatch(typeof(NBgmVolumeSlider), "OnValueChanged")]
-    public static class BgmVolumeSliderPatch
+    [HarmonyPatch(typeof(NAudioManager), nameof(NAudioManager.SetBgmVol))]
+    public static class SetBgmVolPatch
     {
         [HarmonyPostfix]
-        private static void SyncMuteState(double value)
+        private static void SyncMuteStateAndLabel(float volume)
         {
-            ApplyBgmVolume((float)(value / 100.0));
+            _isBgmMuted = volume <= 0f;
+            if (volume > 0f)
+            {
+                _storedVolume = volume;
+            }
+
+            RefreshMusicToggleButtonLabel();
+        }
+    }
+
+    [HarmonyPatch(typeof(NSettingsScreen), "OnSubmenuClosed")]
+    public static class SettingsClosedPatch
+    {
+        [HarmonyPostfix]
+        private static void RefreshMusicToggleButton()
+        {
+            SyncMuteStateFromSettings();
+            RefreshMusicToggleButtonLabel();
         }
     }
 
@@ -64,6 +82,16 @@ public static class MusicTogglePatch
             UpdateButtonLabel(button);
             button.Enable();
             FixControllerInput(____buttonContainer);
+        }
+    }
+
+    [HarmonyPatch(typeof(NPauseMenu), "CloseToMenu")]
+    public static class PauseMenuCloseToMenuPatch
+    {
+        [HarmonyPrefix]
+        private static void DisableMusicToggleButton(Control ____buttonContainer)
+        {
+            GetMusicToggleButton(____buttonContainer)?.Disable();
         }
     }
 
@@ -107,7 +135,8 @@ public static class MusicTogglePatch
         NPauseMenuButton settingsButton,
         NPauseMenuButton compendiumButton)
     {
-        var button = buttonContainer.GetNodeOrNull<NPauseMenuButton>(ButtonName);
+        _pauseMenuButtonContainer = buttonContainer;
+        var button = GetMusicToggleButton(buttonContainer);
         if (button == null)
         {
             button = (NPauseMenuButton)settingsButton.Duplicate(DuplicateWithoutSignals);
@@ -209,10 +238,50 @@ public static class MusicTogglePatch
         }
     }
 
+    private static NPauseMenuButton? GetMusicToggleButton(Control buttonContainer)
+    {
+        return buttonContainer.GetNodeOrNull<NPauseMenuButton>(ButtonName);
+    }
+
+    private static void RefreshMusicToggleButtonLabel()
+    {
+        if (_pauseMenuButtonContainer != null)
+        {
+            var button = GetMusicToggleButton(_pauseMenuButtonContainer);
+            if (button != null)
+            {
+                UpdateButtonLabel(button);
+                return;
+            }
+        }
+
+        var root = NGame.Instance?.GetTree()?.Root;
+        if (root == null)
+        {
+            return;
+        }
+
+        RefreshMusicToggleButtonLabelRecursive(root);
+    }
+
+    private static void RefreshMusicToggleButtonLabelRecursive(Node node)
+    {
+        if (node is NPauseMenuButton button && (string)button.Name == ButtonName)
+        {
+            UpdateButtonLabel(button);
+            return;
+        }
+
+        foreach (var child in node.GetChildren())
+        {
+            RefreshMusicToggleButtonLabelRecursive(child);
+        }
+    }
+
     private static void UpdateButtonLabel(NPauseMenuButton button)
     {
         var isMuted = SaveManager.Instance.SettingsSave.VolumeBgm <= 0f;
-        var label = isMuted ? "Unmute Music" : "Mute Music";
+        var label = isMuted ? "Play Music" : "Mute Music";
         button.GetNode<MegaLabel>("Label").SetTextAutoSize(label);
     }
 
